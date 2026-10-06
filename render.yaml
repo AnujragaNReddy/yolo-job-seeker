@@ -1,0 +1,112 @@
+# Two services: a Python backend that searches the job boards and scores
+# postings, and a static React frontend.
+#
+# Deploy order matters. Render only assigns a service its URL after its first
+# deploy, and each side needs the other's:
+#   1. Deploy both.
+#   2. Copy the backend URL -> set VITE_API_URL on the frontend.
+#   3. Copy the frontend URL -> set ALLOWED_ORIGINS on the backend.
+#   4. Redeploy the frontend (Vite bakes VITE_* in at build time).
+#
+# Without step 3 the browser blocks every call: the backend's CORS default
+# only allows localhost.
+#
+# Free tier caveats that matter here:
+#   - The disk is ephemeral, so the uploaded resume, the matches and the
+#     application history are wiped on every restart. Set the GOOGLE_* vars;
+#     Drive is what makes any of it survive.
+#   - Services spin down after ~15 minutes idle, taking background threads
+#     with them. SCAN_INTERVAL_SECONDS therefore stays 0 and the four-hourly
+#     scan runs from .github/workflows/job-scan.yml, which also wakes the
+#     service.
+services:
+  - type: web
+    name: yolo-job-seeker-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Pin the interpreter. Left unset, Render builds against whatever is
+      # newest, and bleeding-edge native wheels are how the sibling project
+      # ended up crash-looping on a corrupted heap.
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      # Set to the frontend's Render URL once it exists, e.g.
+      # https://yolo-job-seeker.onrender.com
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+      # Durable storage. Without these, the resume and every application
+      # record live only on the ephemeral disk and are wiped on restart.
+      # Set all four or none — see the README for the one-time token setup.
+      - key: GOOGLE_DRIVE_ROOT_FOLDER_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+
+      # Matching behaviour. These are also editable from the UI at runtime,
+      # which is the better place for anything you want to tune.
+      - key: MIN_MATCH_SCORE
+        value: "45"
+      - key: AUTO_PREPARE_ABOVE
+        value: "75"
+      - key: MAX_PREPARE_PER_SCAN
+        value: "5"
+      - key: JOBS_PER_SOURCE
+        value: "40"
+      - key: MAX_JOB_AGE_DAYS
+        value: "30"
+
+      # Background timers are unreliable on a service that spins down; leave
+      # this at 0 and drive /api/scan from the GitHub Action.
+      - key: SCAN_INTERVAL_SECONDS
+        value: "0"
+
+      # Optional extra boards. Remotive, Arbeitnow and The Muse need nothing
+      # and are always on; everything below only widens the search.
+      #
+      # Comma-separated company slugs from their public board URLs, e.g.
+      # boards.greenhouse.io/<slug> and jobs.lever.co/<slug>.
+      - key: GREENHOUSE_COMPANIES
+        sync: false
+      - key: LEVER_COMPANIES
+        sync: false
+      # developer.adzuna.com — free, instant. Country is part of the API path,
+      # so it must match where you are looking (in, us, gb, au...).
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: ADZUNA_COUNTRY
+        value: in
+      # jooble.org/api/about — free key.
+      - key: JOOBLE_API_KEY
+        sync: false
+      - key: JOB_LOCATION
+        sync: false
+      # developer.usajobs.gov — free, US federal roles only.
+      - key: USAJOBS_EMAIL
+        sync: false
+      - key: USAJOBS_API_KEY
+        sync: false
+
+  - type: web
+    name: yolo-job-seeker
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Set to the backend's Render URL, no trailing slash, then redeploy.
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

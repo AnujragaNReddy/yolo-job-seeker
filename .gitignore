@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Runtime data. Everything here is generated, and the resume in particular
+# is personal — it must never end up in the repo.
+backend/data/
+backend/output/
+
+# Node
+node_modules/
+frontend/dist/
+.vite/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

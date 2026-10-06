@@ -1,0 +1,85 @@
+name: Job scan
+
+# Render's free tier sleeps after ~15 minutes idle, which kills the backend's
+# own background threads, so the four-hourly scan runs from here instead.
+# Hitting the API also wakes the service, which is half the point.
+on:
+  schedule:
+    - cron: '15 */4 * * *' # every 4 hours, UTC
+  workflow_dispatch:
+    inputs:
+      prepare:
+        description: 'Also draft cover letters for the best matches'
+        required: false
+        default: 'true'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the backend
+        env:
+          BACKEND: ${{ vars.BACKEND_URL || 'https://yolo-job-seeker-backend.onrender.com' }}
+        run: |
+          # A sleeping free instance takes ~30-50s to boot, so retry rather
+          # than failing the run on the first cold-start timeout.
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$BACKEND/api/health" || true)
+            echo "attempt $attempt: HTTP ${code:-none}"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "::error::Backend never returned 200 at $BACKEND/api/health"
+          exit 1
+
+      - name: Scan the boards
+        env:
+          BACKEND: ${{ vars.BACKEND_URL || 'https://yolo-job-seeker-backend.onrender.com' }}
+          PREPARE: ${{ github.event.inputs.prepare || 'true' }}
+        run: |
+          code=$(curl -s --max-time 900 -o response.json -w '%{http_code}' \
+            -X POST "$BACKEND/api/scan?prepare=$PREPARE")
+
+          echo "HTTP $code"
+          cat response.json
+
+          # 409 means no resume has been uploaded yet. That is a setup step
+          # nobody has done, not a broken scan, so it does not fail the run.
+          if [ "$code" = "409" ]; then
+            echo "No resume uploaded yet - nothing to scan." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Scan failed with HTTP $code"
+            exit 1
+          fi
+
+          # A 200 only means the scan ran. Per-source failures and a match
+          # count of zero both need surfacing, or "fewer results than usual"
+          # becomes a silent mystery.
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          with open('response.json') as f:
+              data = json.load(f)
+
+          counts = data.get('counts') or {}
+          print('### Job scan\n')
+          print(f"Searched: `{data.get('query')}`\n")
+          print(f"- Postings returned: {counts.get('returned', 0)}")
+          print(f"- After age filter: {counts.get('fresh', 0)}")
+          print(f"- Unique openings: {counts.get('unique', 0)}")
+          print(f"- Cleared the score bar: {counts.get('matched', 0)}")
+          print(f"- Letters drafted: {counts.get('prepared', 0)}")
+
+          failed = [s for s in (data.get('sources') or []) if s.get('ok') is False]
+          if failed:
+              print(f"\n**{len(failed)} board(s) failed:**\n")
+              for s in failed:
+                  print(f"- `{s['source']}`: {str(s.get('reason'))[:200]}")
+
+          if not counts.get('matched'):
+              print('\n> No matches cleared the minimum score. Either the '
+                    'boards had nothing relevant, or the score threshold and '
+                    'the parsed skill list are worth a look.')
+          PY

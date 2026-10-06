@@ -1,0 +1,25 @@
+fastapi
+
+# Plain uvicorn, not uvicorn[standard]. The [standard] extra pulls in uvloop
+# and httptools, C extensions that corrupted the glibc heap on Render when
+# built against bleeding-edge Python wheels. The pure-Python loop and h11
+# parser are slower in a benchmark and indistinguishable at this traffic.
+uvicorn
+h11
+
+pydantic
+requests
+
+# Multipart form parsing, which FastAPI needs for the resume upload. Without
+# it the upload endpoint raises at import, not at request time.
+python-multipart
+
+# Resume text extraction. Both are small and pure-ish Python; an NLP stack
+# would not fit alongside everything else in 512MB.
+pypdf
+python-docx
+
+# Optional — only needed when GOOGLE_* env vars are set for Drive storage.
+google-api-python-client
+google-auth
+google-auth-oauthlib
