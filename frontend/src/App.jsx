@@ -56,8 +56,27 @@ export default function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [backendDown, setBackendDown] = useState(false);
+  const [misconfigured, setMisconfigured] = useState(false);
   const [wakeAttempt, setWakeAttempt] = useState(0);
   const [stoppedWaking, setStoppedWaking] = useState(false);
+
+  // The loaders below swallow their errors so one failing panel does not take
+  // the page down. That is right for a transient failure and wrong for a
+  // misconfigured deployment, where every call fails identically and the page
+  // would just render empty with nothing saying why.
+  // Returns whether it recognised the failure, so callers can decide whether
+  // there is anything left worth putting in the error banner.
+  const noteFailure = useCallback((err) => {
+    if (err?.misconfigured) {
+      setMisconfigured(true);
+      return true;
+    }
+    if (err?.backendDown) {
+      setBackendDown(true);
+      return true;
+    }
+    return false;
+  }, []);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -67,7 +86,7 @@ export default function App() {
       setQuery(data.query || '');
       setBackendDown(false);
     } catch (err) {
-      if (err.backendDown) setBackendDown(true);
+      noteFailure(err);
     }
   }, []);
 
@@ -86,7 +105,7 @@ export default function App() {
       // seed what is already known from has_letter and fill in on demand.
       setBackendDown(false);
     } catch (err) {
-      if (err.backendDown) setBackendDown(true);
+      noteFailure(err);
     }
   }, []);
 
@@ -103,7 +122,7 @@ export default function App() {
       }
       setLetters((previous) => ({ ...known, ...previous }));
     } catch (err) {
-      if (err.backendDown) setBackendDown(true);
+      noteFailure(err);
     }
   }, []);
 
@@ -157,7 +176,7 @@ export default function App() {
       );
       loadProfile();
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setUploading(false);
     }
@@ -170,7 +189,7 @@ export default function App() {
       setProfile(data.profile);
       loadProfile();
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setSavingProfile(false);
     }
@@ -188,7 +207,7 @@ export default function App() {
       setMatches([]);
       setMatchMeta({});
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     }
   }
 
@@ -204,8 +223,7 @@ export default function App() {
       );
       await Promise.all([loadMatches(filter), loadApplications()]);
     } catch (err) {
-      if (err.backendDown) setBackendDown(true);
-      else setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setScanning(false);
     }
@@ -226,7 +244,7 @@ export default function App() {
       });
       setNextOffset(data.next_offset ?? null);
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setLoadingMore(false);
     }
@@ -240,7 +258,7 @@ export default function App() {
       setLetters((previous) => ({ ...previous, [jobId]: data.application }));
       loadApplications();
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setPreparingId(null);
     }
@@ -256,7 +274,7 @@ export default function App() {
       await setApplicationState(jobId, state);
       loadApplications();
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
       loadMatches(filter);
     }
   }
@@ -267,7 +285,7 @@ export default function App() {
       const data = await updateSettings(values);
       setSettings(data.settings);
     } catch (err) {
-      setError(err.message);
+      if (!noteFailure(err)) setError(err.message);
     } finally {
       setSavingSettings(false);
     }
@@ -298,7 +316,26 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        {backendDown && (
+        {/* A setup problem rather than a runtime one, and it makes every
+            single call fail the same way — so it gets said once, clearly,
+            instead of arriving as a parser error from whichever request
+            happened to run first. */}
+        {misconfigured && (
+          <div className="banner banner-error">
+            <AlertTriangle size={16} />
+            <div>
+              <strong>This page is calling itself, not the backend.</strong>{' '}
+              <code>VITE_API_URL</code> is not set, so requests go to the static
+              site, which answers every unknown path with the page itself.
+              <br />
+              Set <code>VITE_API_URL</code> on the frontend service to the
+              backend URL, then redeploy it — Vite bakes the value in at build
+              time, so a restart alone will not pick it up.
+            </div>
+          </div>
+        )}
+
+        {backendDown && !misconfigured && (
           <div className="banner banner-error">
             <ServerCrash size={16} />
             <div>

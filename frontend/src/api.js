@@ -10,6 +10,38 @@ function backendDownError() {
   return error;
 }
 
+function misconfiguredError() {
+  const error = new Error(
+    'The API returned a web page instead of data, which means this page is '
+    + 'calling itself rather than the backend. Set VITE_API_URL to the backend '
+    + 'URL on the frontend service and redeploy it.'
+  );
+  error.misconfigured = true;
+  return error;
+}
+
+/** Read a response body as JSON, saying something useful when it is not.
+ *
+ * Calling response.json() directly gives "Unexpected end of JSON input", which
+ * names a JSON parser rather than the problem. The problem is almost always
+ * that VITE_API_URL is unset: the request then goes to the static site's own
+ * origin, where the SPA rewrite answers every unknown path with index.html —
+ * HTTP 200, so nothing upstream treats it as an error, and a web page arrives
+ * where data was expected.
+ */
+async function readJson(response, path) {
+  const text = await response.text();
+
+  if (!text.trim()) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (text.trimStart().startsWith('<')) throw misconfiguredError();
+    throw new Error(`${path} returned something that is not JSON.`);
+  }
+}
+
 async function request(path, options = {}) {
   let response;
 
@@ -27,6 +59,9 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
+    // Not readJson: a failed request is allowed to carry an HTML error page,
+    // from a gateway rather than from a misconfiguration, and that should
+    // read as "the backend is down" rather than "set VITE_API_URL".
     const body = await response.json().catch(() => null);
 
     // A bodyless gateway status means the backend is down or waking, not that
@@ -38,7 +73,13 @@ async function request(path, options = {}) {
     throw new Error(body?.detail || `Request failed (${response.status})`);
   }
 
-  return response.json();
+  const data = await readJson(response, path);
+
+  if (data === null) {
+    throw new Error(`${path} returned an empty response (HTTP ${response.status}).`);
+  }
+
+  return data;
 }
 
 export const getHealth = () => request('/api/health');
