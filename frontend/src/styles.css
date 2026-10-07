@@ -435,3 +435,39 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
   .match-top { flex-wrap: wrap; }
   .tracker th:nth-child(5), .tracker td:nth-child(5) { display: none; }
 }
+
+/* ---------- sign-in gate ---------- */
+
+.auth-gate {
+  max-width: 380px;
+  margin: 18vh auto;
+  padding: 30px 26px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.auth-gate h2 { margin: 0 0 8px; font-size: 17px; }
+.auth-gate button {
+  margin-top: 16px;
+  padding: 10px 18px;
+  border-radius: 9px;
+  border: 0;
+  background: var(--accent, #6c8cff);
+  color: #0d1020;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-gate button:hover { filter: brightness(1.08); }
+.auth-error {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--error, #ff8a8a);
+}
+.auth-loading {
+  margin: 18vh auto;
+  text-align: center;
+  color: var(--dim, #8b91a1);
+  font-size: 14px;
+}

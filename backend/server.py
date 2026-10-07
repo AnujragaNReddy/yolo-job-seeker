@@ -28,8 +28,28 @@ import scanner
 import skills
 import sources as sources_module
 import store
+import yolo_auth
 
 app = FastAPI(title="yolo-job-seeker", version="1.0.0")
+
+# Sign-in, applied to everything except the paths named here.
+#
+# /api/health is public because the scheduled job pings it to wake a sleeping
+# instance before it can send anything else, and because a health check that
+# needs credentials is not a health check.
+#
+# /api/scan takes the service token because the four-hourly GitHub Action
+# drives it and has no browser to sign in with.
+#
+# Everything else - the resume, the profile, the matches, the tracker - is
+# private by default. That is the right default here more than in the sibling
+# projects: this one holds a CV, an employment history and a record of where
+# someone has applied for work.
+yolo_auth.install_auth(
+    app,
+    public=("/api/health", "/docs", "/openapi.json", "/redoc"),
+    service=("/api/scan",),
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,6 +58,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 # A scan takes minutes across several boards, which is far longer than a
 # request should block. One worker, because the free instance has one core and

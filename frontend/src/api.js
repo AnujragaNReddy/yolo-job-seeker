@@ -42,6 +42,21 @@ async function readJson(response, path) {
   }
 }
 
+// The access token, supplied by the auth provider once it has one. A getter
+// rather than a stored value: the token is refreshed on a timer, and a copy
+// taken at import time would be stale within the quarter hour.
+let tokenProvider = () => '';
+
+export function setTokenProvider(getToken) {
+  tokenProvider = getToken || (() => '');
+}
+
+function signInRequiredError() {
+  const error = new Error('Sign in to continue.');
+  error.needsAuth = true;
+  return error;
+}
+
 async function request(path, options = {}) {
   let response;
 
@@ -51,7 +66,10 @@ async function request(path, options = {}) {
     response = await fetch(`${API_BASE}${path}`, {
       // Setting Content-Type on a FormData body breaks it: the browser has to
       // add the multipart boundary itself.
-      headers: isForm ? undefined : { 'Content-Type': 'application/json' },
+      headers: {
+        ...(isForm ? {} : { 'Content-Type': 'application/json' }),
+        ...(tokenProvider() ? { Authorization: `Bearer ${tokenProvider()}` } : {}),
+      },
       ...options,
     });
   } catch {
@@ -66,6 +84,11 @@ async function request(path, options = {}) {
 
     // A bodyless gateway status means the backend is down or waking, not that
     // the API rejected anything — without this it shows as a bare 500.
+    // Distinct from a failure: the call was understood and refused for
+    // want of a signed-in user. The UI shows a sign-in prompt rather than
+    // an error.
+    if (response.status === 401) throw signInRequiredError();
+
     if (!body && [500, 502, 503, 504].includes(response.status)) {
       throw backendDownError();
     }
